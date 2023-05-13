@@ -38,6 +38,9 @@ func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 		duration:   6 * time.Second,
 	}
 
+	// The greates magic trick
+	// Before even the server starts fetch stories and put in cache
+	// Update Cache after every 3 seconds
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
 		for {
@@ -49,11 +52,11 @@ func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 
 			temp.stories()
 			sc.mutex.Lock()
-            sc.cache = temp.cache
-            sc.expiration = temp.expiration
-            sc.mutex.Unlock()
+			sc.cache = temp.cache
+			sc.expiration = temp.expiration
+			sc.mutex.Unlock()
 
-			<- ticker.C
+			<-ticker.C
 		}
 	}()
 
@@ -110,6 +113,8 @@ type storyCache struct {
 	mutex      sync.Mutex
 }
 
+// Checks if there is a story cache within the expiration time
+// If there is no cache Go and fetch the stories.
 func (sc *storyCache) stories() ([]item, error) {
 	sc.mutex.Lock()
 	defer sc.mutex.Unlock()
@@ -121,8 +126,11 @@ func (sc *storyCache) stories() ([]item, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
+	// Update cache  with new stories
 	sc.cache = stories
+
+	//Update expiration Time
 	sc.expiration = time.Now().Add(sc.duration)
 
 	return sc.cache, nil
@@ -141,8 +149,11 @@ func getTopStories(numStories int) ([]item, error) {
 	at := 0
 
 	for len(stories) < numStories {
+
 		need := (numStories - len(stories)) * 5 / 4
+		fmt.Println(numStories, len(stories), at, need)
 		stories = append(stories, getStories(ids[at:at+need])...)
+		at += need
 
 	}
 
@@ -150,6 +161,7 @@ func getTopStories(numStories int) ([]item, error) {
 
 }
 
+// Most of the magic happens here
 func getStories(ids []int) []item {
 
 	type result struct {
@@ -160,6 +172,7 @@ func getStories(ids []int) []item {
 	var resultCh = make(chan result)
 
 	for i := 0; i < len(ids); i++ {
+		// Fetch stories using groutine
 		go func(idx, id int) {
 			var client hn.Client
 			hnItem, err := client.GetItem(id)
@@ -173,20 +186,25 @@ func getStories(ids []int) []item {
 
 	var results []result
 
+	// Receive the stories result
 	for i := 0; i < len(ids); i++ {
 		results = append(results, <-resultCh)
 	}
 
+	// Sort the result of the slice
 	sort.Slice(results, func(i int, j int) bool {
 		return results[i].idx < results[j].idx
 	})
 	var stories []item
 
 	for _, res := range results {
+		// Skip the errors
 		if res.err != nil {
 			continue
 
 		}
+
+		// Condition for append
 		if isStoryLink(res.item) {
 			stories = append(stories, res.item)
 
